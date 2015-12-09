@@ -1,6 +1,6 @@
 local lstm = require 'model.lstm'
 
-function multilayer_lstm(input_size, rnn_size, num_layers, dropout, encoder)
+function multilayer_lstm(input_size, rnn_size, num_layers, dropout, encoder, decoder)
   dropout = dropout or 0 
 
   local inputs = {}
@@ -40,9 +40,9 @@ function multilayer_lstm(input_size, rnn_size, num_layers, dropout, encoder)
   -- set up the decoder
   local top_h = outputs[#outputs]
   if dropout > 0 then top_h = nn.Dropout(dropout)(top_h) end
-  local h2y = nn.Linear(rnn_size, input_size)(top_h):annotate{name='decoder'}
-  local logsoft = nn.LogSoftMax()(h2y)
-  table.insert(outputs, logsoft)
+
+  decoded = decoder(top_h)
+  table.insert(outputs, decoded)
 
   return nn.gModule(inputs, outputs)
 end

@@ -24,7 +24,7 @@ require 'util.OneHot'
 require 'util.misc'
 
 local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
-local SeqModel = require 'seq_model'
+local SeqModel = require 'model.seq_model'
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -34,7 +34,7 @@ cmd:text('Options')
 -- data
 cmd:option('-data_dir','data/tinyshakespeare','data directory. Should contain the file input.txt with input data')
 -- model params
-cmd:option('-rnn_size', 128, 'size of LSTM internal state')
+cmd:option('-rnn_size', 500, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm,gru or rnn')
 -- optimization
@@ -43,12 +43,12 @@ cmd:option('-learning_rate_decay',0.97,'learning rate decay')
 cmd:option('-learning_rate_decay_after',10,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
-cmd:option('-seq_length',60,'number of timesteps to unroll for')
-cmd:option('-batch_size',50,'number of sequences to train on in parallel')
+cmd:option('-seq_length',20,'number of timesteps to unroll for')
+cmd:option('-batch_size',20,'number of sequences to train on in parallel')
 cmd:option('-max_epochs',1,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.999,'fraction of data that goes into train set')
-cmd:option('-val_frac',0.001,'fraction of data that goes into validation set')
+cmd:option('-val_frac',0.4,'fraction of data that goes into validation set')
             -- test_frac will be computed as (1 - train_frac - val_frac)
 cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
 -- bookkeeping
@@ -72,10 +72,20 @@ local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
 
 initGpu(opt.gpuid, opt.opencl, opt.seed)
 
+local ptb = require('util.words')
+local state_train, vocab = ptb.traindataset(opt.batch_size)
+
+function tablelength(T)
+  local count = 0
+  for _ in pairs(T) do count = count + 1 end
+  return count
+end
+
+print(tablelength(vocab))
+
 -- create the data loader class
 local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes)
-local vocab_size = loader.vocab_size  -- the number of distinct characters
-local vocab = loader.vocab_mapping
+local vocab_size = tablelength(vocab) -- loader.vocab_size  -- the number of distinct characters
 print('vocab size: ' .. vocab_size)
 -- make sure output directory exists
 if not path.exists(opt.checkpoint_dir) then lfs.mkdir(opt.checkpoint_dir) end
@@ -142,6 +152,8 @@ function prepro(x,y)
     return x,y
 end
 
+local index = 1
+
 function feval(x)
     if x ~= nn.params then
         nn.params:copy(x)
@@ -149,7 +161,10 @@ function feval(x)
     nn.grad_params:zero()
 
     -- get minibatch
-    local x, y = prepro(loader:next_batch(1))
+    -- local x, y = prepro(loader:next_batch(1))
+    local x = state_train[{{index, index + opt.seq_length - 1}}]
+    local y = state_train[{{index + 1, index +  opt.seq_length}}]
+    index = index + opt.seq_length
 
     -- forward pass
     local predictions = nn:forward(x)
@@ -176,17 +191,17 @@ local optim_state = {
   alpha = opt.decay_rate
 }
 
-local iterations = opt.max_epochs * loader.ntrain
-local iterations_per_epoch = loader.ntrain
+local iterations_per_epoch = state_train:size(1) / opt.seq_length
+local iterations = opt.max_epochs * iterations_per_epoch
 local loss0 = nil
 
-local log = io.open("lookup.log", "w")
+local log = io.open("adagrad.log", "w")
 
 for i = 1, iterations do
-    local epoch = i / loader.ntrain
+    local epoch = i / iterations_per_epoch
 
     local timer = torch.Timer()
-    local _, loss = optim.rmsprop(feval, nn.params, optim_state)
+    local _, loss = optim.adagrad(feval, nn.params, optim_state)
 
     if opt.accurate_gpu_timing == 1 and opt.gpuid >= 0 then
         --[[
@@ -203,25 +218,26 @@ for i = 1, iterations do
     train_losses[i] = train_loss
 
     -- exponential learning rate decay
-    if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
-        if epoch >= opt.learning_rate_decay_after then
-            local decay_factor = opt.learning_rate_decay
-            optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
-            print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
-        end
-    end
+--    if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
+--        if epoch >= opt.learning_rate_decay_after then
+--            local decay_factor = opt.learning_rate_decay
+--            optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
+--            print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
+--        end
+--    end
 
     -- every now and then or on last iteration
     if i % opt.eval_val_every == 0 or i == iterations then
+        local savefile = string.format('%s/lm_%s_epoch%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch)
+        -- local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        print('saving checkpoint to ' .. savefile)
+        nn:save(savefile)
+
         -- evaluate loss on validation data
         local val_loss = nn:eval(loader, 2) -- 2 = validation
         val_losses[i] = val_loss
 
         print(val_loss)
-
-        local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
-        print('saving checkpoint to ' .. savefile)
-        nn:save(savefile)
     end
 
     if i % opt.print_every == 0 then

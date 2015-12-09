@@ -6,10 +6,22 @@ SeqModel.__index = SeqModel
 
 function SeqModel.buildProto(vocab_size, rnn_size, num_layers, dropout)
     local protos = {}
-    local encoder, input_size = nn.LookupTable(vocab_size, rnn_size), rnn_size
+
+    local input_size = rnn_size 
+    local encoder = nn.LookupTable(vocab_size, rnn_size)
+
+    function decoder(y) 
+      local h2y = nn.Linear(rnn_size, vocab_size)(y)
+      return nn.LogSoftMax()(h2y)
+    end
+
     -- local encoder, input_size = OneHot(vocab_size), vocab_size
 
-    protos.rnn = multilayer_lstm(input_size, rnn_size, num_layers, dropout, encoder)
+    protos.rnn = multilayer_lstm(
+      input_size, rnn_size, num_layers, dropout, 
+      encoder, decoder
+    )
+
     protos.criterion = nn.ClassNLLCriterion()
 
     return protos
