@@ -136,17 +136,10 @@ end
 for i=1, opt.length do
 
     -- log probabilities from the previous timestep
-    if opt.sample == 0 then
         -- use argmax
         local _, prev_char_ = prediction:max(2)
         prev_char = prev_char_:resize(1)
-    else
-        -- use sampling
-        prediction:div(opt.temperature) -- scale by temperature
-        local probs = torch.exp(prediction):squeeze()
-        probs:div(torch.sum(probs)) -- renormalize so probs sum to one
-        prev_char = torch.multinomial(probs:float(), 1):resize(1):float()
-    end
+
 
     -- forward the rnn for next character
     local lst = protos.rnn:forward{prev_char, unpack(current_state)}
@@ -154,7 +147,8 @@ for i=1, opt.length do
     for i=1,state_size do table.insert(current_state, lst[i]) end
     prediction = lst[#lst] -- last element holds the log probabilities
 
-    io.write(ivocab[prev_char[1]])
+    -- io.write(ivocab[prev_char[1]] .. " ")
+    io.write(ivocab[prev_char[1]] .. " ")
 end
 io.write('\n') io.flush()
 

@@ -40,13 +40,14 @@ local function load_data(fname)
       end
       x[i] = vocab_map[data[i]]
    end
-   return x
+
+   return x, vocab_map
 end
 
 local function traindataset(batch_size)
-   local x = load_data(ptb_path .. "ptb.train.txt")
+   local x, vocab = load_data(ptb_path .. "foobig.txt")
    x = replicate(x, batch_size)
-   return x
+   return x, vocab
 end
 
 -- Intentionally we repeat dimensions without offseting.
